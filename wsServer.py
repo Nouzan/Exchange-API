@@ -8,7 +8,7 @@ async def hello(websocket, path):
         while True:
             await asyncio.sleep(random.randint(5, 10))
             for i in range(10):
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.5)
                 await websocket.send('KEEP')
             print(f'> KEEP')
     print(f'< {name}')
