@@ -38,6 +38,15 @@ class Exchange(object):
                     comsumer(message)
         return awf
 
+    def testEx(self, uri, data, comsumer):
+        import json
+        async def awf():
+            async with websockets.connect(uri) as ws:
+                await ws.send(json.dumps(data))
+                async for message in ws:
+                    comsumer(message)
+        return awf
+
 
 class RobotBase(object):
     timeunit = 60    # :: int    定时任务频率限制计时周期单位(s)

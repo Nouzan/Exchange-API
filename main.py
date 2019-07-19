@@ -18,4 +18,7 @@ class Market(RobotBase):
 
 mk = Market(rateLimit=100, interval=1, timeunit=60)
 mk.addKeep(exchange.keepWaitting(mk.show))
+URI = ""
+DATA = {}
+# mk.addKeep(exchange.testEx(URI, DATA, mk.show))
 mk.run()
