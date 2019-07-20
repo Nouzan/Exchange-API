@@ -5,20 +5,23 @@ exchange = Exchange()
 
 class Market(RobotBase):
 
-    def show(self, result):
+    async def show(self, result):
         self.logger.info(result)
         return result
 
-    def loop(self):
-        self.addSend(exchange.sayHello(f'Nouzan[{self.loopCount}]'), self.show, self.show)
-        self.addSend(exchange.sayHello(f'Koala[{self.loopCount}]'), self.show, self.show)
-        self.logger.info(
-            f'[LOOP {self.loopCount}][RUNTIME {round(self.loopCount * self.interval, 2)}][KEEP {len(self.keepList)}][SEND {len(self.sendList)}][RATECOUNT {self.rateCount}/{self.rateLimit}]'
-        )
+def next(rbt, name):
+    async def awf(result):
+        rbt.logger.info(result)
+        rbt.addSend(exchange.sayHello(f'{name}[{rbt.loopCount}]'), next(rbt, name), next(rbt, name))
+    return awf
 
-mk = Market(rateLimit=100, interval=1, timeunit=60)
-mk.addKeep(exchange.keepWaitting(mk.show))
+mk = Market(rateLimit=100, interval=1, timeunit=60, debug=True)
+
+mk.addSend(mk.idle(), next(mk, 'Nouzan'), next(mk, 'Nouzan'))
+mk.addSend(mk.idle(), next(mk, 'Koala'), next(mk, 'Koala'))
+
 URI = ""
 DATA = {}
+mk.addKeep(exchange.keepWaitting(mk.show))
 # mk.addKeep(exchange.testEx(URI, DATA, mk.show))
 mk.run()

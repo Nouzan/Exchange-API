@@ -5,20 +5,22 @@ import random
 import logging
 
 # 为异步任务添加回调
-# addCallbacks :: Awaitable a -> (a -> b) -> (Error -> b) -> Awaitable b
-async def addCallbacks(aw, callback=None, errback=None):
-    try:
-        result = await aw
-    except Exception as err:
-        if errback is not None:
-            return errback(err)
+# addCallbacks :: awf a -> (a -> aw b) -> (Error -> aw b) -> awf b
+def addCallbacks(awf, callback=None, errback=None):
+    async def _awf():
+        try:
+            result = await awf()
+        except Exception as err:
+            if errback is not None:
+                return await errback(err)
+            else:
+                return err
         else:
-            return err
-    else:
-        if callback is not None:
-            return callback(result)
-        else:
-            return result
+            if callback is not None:
+                return await callback(result)
+            else:
+                return result
+    return _awf
 
 class Exchange(object):
     def sayHello(self, name):
@@ -35,7 +37,7 @@ class Exchange(object):
             async with websockets.connect(uri) as ws:
                 await ws.send('KEEP')
                 async for message in ws:
-                    comsumer(message)
+                    await comsumer(message)
         return awf
 
     def testEx(self, uri, data, comsumer):
@@ -44,7 +46,7 @@ class Exchange(object):
             async with websockets.connect(uri) as ws:
                 await ws.send(json.dumps(data))
                 async for message in ws:
-                    comsumer(message)
+                    await comsumer(message)
         return awf
 
 
@@ -55,7 +57,8 @@ class RobotBase(object):
     rateLimit = 30   # :: int    短请求频率限制(每个计时周期内允许的短请求次数)
     rateCount = 0    # :: int    计时周期内的已短请求次数
     keepList = []    # :: [awf]  长连接请求列表
-    sendList = []    # :: [aw]   短请求列表
+    sendList = []    # :: [awf]  短请求列表
+    waitList = []    # :: [awf]  推迟短请求列表
     logger = None    # :: Logger 日志对象
     debug = False    # :: bool   是否启动调试
 
@@ -67,6 +70,7 @@ class RobotBase(object):
         self.rateCount = 0
         self.keepList = []
         self.sendList = []
+        self.waitList = []
         self.logger = logging.getLogger('asyncio')
 
         self.loggingConfig()
@@ -77,38 +81,62 @@ class RobotBase(object):
         logging.basicConfig(format=FORMAT)
         self.logger.setLevel(logging.DEBUG)
 
+    def idle(self):
+        async def awf():
+            return "[IDLE]"
+        return awf
+
     # ----------------- 定时及短连接支持 -----------------
 
-    # 定时任务
+    # 首次任务
+    async def init(self):
+        self.logger.info(
+            f'[INIT]'
+        )
+
+    # 定时任务(必须是非阻塞的，才能保证定时任务确实是定时执行的)
     def loop(self):
         self.logger.info(
-            f'[LOOP {self.loopCount}][RUNTIME {round(self.loopCount * self.interval, 2)}][KEEP {len(self.keepList)}][SEND {len(self.sendList)}][RATECOUNT {self.rateCount}/{self.rateLimit}]'
+            f'[LOOP {self.loopCount}][RUNTIME {round(self.loopCount * self.interval, 2)}][KEEP {len(self.keepList)}][SEND {len(self.sendList)}][WAIT {len(self.waitList)}][RATECOUNT {self.rateCount}/{self.rateLimit}]'
         )
+
+    # 短连接请求协程
+    def _send(self):
+        asyncio.gather(
+            *[awf() for awf in self.sendList]
+        )
+        self.sendList = []
+
+        # 到下一周期时清零rateCount，并将waitList中的任务转移到sendList
+        if (self.loopCount * self.interval) % self.timeunit < 1:
+            self.rateCount = 0
+            if len(self.waitList) <= self.rateLimit:
+                self.sendList += self.waitList
+                self.waitList = []
+                self.rateCount = len(self.sendList)
+            else:
+                self.sendList = self.waitList[:self.rateLimit]
+                self.waitList = self.waitList[self.rateLimit:]
+                self.rateCount = len(self.sendList)
 
     # 定时任务协程
     async def _loop(self):
         self.loopCount = 0
+        await self.init()
         while True:
             self.loop()
             self._send()
             await asyncio.sleep(self.interval)
             self.loopCount += 1
 
-    # 短连接请求协程
-    def _send(self):
-        asyncio.gather(*self.sendList)
-        self.sendList = []
-
-        # 到下一周期时清零rateCount
-        if (self.loopCount * self.interval) % self.timeunit < 1:
-            self.rateCount = 0
-
     # 添加一次短连接定时请求(awf :: () -> aw)
-    def addSend(self, awf, cb, eb):
-        # 未达到上限时添加一次定时请求，否则丢弃定时请求
+    def addSend(self, awf, callback, errback):
+        # 未达到上限时添加一次定时请求，否则添加到推迟列表
         if self.rateCount < self.rateLimit:
             self.rateCount += 1
-            self.sendList.append(addCallbacks(awf(), cb, eb))
+            self.sendList.append(addCallbacks(awf, callback, errback))
+        else:
+            self.waitList.append(addCallbacks(awf, callback, errback))
     # --------------------------------------------------
 
     # -------------------- 长连接支持 --------------------
@@ -119,11 +147,11 @@ class RobotBase(object):
 
     # 长连接请求协程
     async def _startKeep(self, awf):
-        try:
-            await awf()
-        except:
-            print("ERROR retry in 1s")
+        async def errback(error):
+            print("ERROR! Retry in 1s")
             await asyncio.sleep(1)
+            return error
+        await addCallbacks(awf, errback=errback)()
 
     # 长连接守护协程
     async def _startKeepForever(self, awf):
