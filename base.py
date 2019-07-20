@@ -145,18 +145,15 @@ class RobotBase(object):
     def addKeep(self, awf):
         self.keepList.append(awf)
 
-    # 长连接请求协程
-    async def _startKeep(self, awf):
+    # 长连接守护协程
+    async def _startKeepForever(self, awf):
         async def errback(error):
             print("ERROR! Retry in 1s")
             await asyncio.sleep(1)
             return error
-        await addCallbacks(awf, errback=errback)()
 
-    # 长连接守护协程
-    async def _startKeepForever(self, awf):
         while True:
-            await self._startKeep(awf)
+            await addCallbacks(awf, errback=errback)()
 
     # 运行全部长连接请求的协程
     async def _keep(self):
