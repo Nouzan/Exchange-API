@@ -40,13 +40,13 @@ class Exchange(object):
                     await comsumer(message)
         return awf
 
-    def testEx(self, uri, data, comsumer):
+    def testEx(self, uri, data, consumer):
         import json
         async def awf():
             async with websockets.connect(uri) as ws:
                 await ws.send(json.dumps(data))
                 async for message in ws:
-                    await comsumer(message)
+                    await consumer(message)
         return awf
 
 
